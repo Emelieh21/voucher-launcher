@@ -48,3 +48,5 @@ local
 
 # Archive
 archive
+
+.env.sandbox
