@@ -229,3 +229,9 @@ button:disabled {
   margin-top:20px;
   margin-left:40px
 }
+
+.img-center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}

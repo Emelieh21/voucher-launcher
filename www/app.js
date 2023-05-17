@@ -82,6 +82,10 @@ function displayPaymentResults(status) {
     if (status === 'SUCCESS') {
         statusContainer.classList.remove('is-failure');
         statusContainer.classList.add('is-success');
+        // Inform shiny server that payment was successful
+        var trigger = Math.random();
+        var amount = document.getElementById('voucher-amount').value
+        Shiny.onInputChange("success", {value: amount, random: trigger});
     } else {
         statusContainer.classList.remove('is-success');
         statusContainer.classList.add('is-failure');

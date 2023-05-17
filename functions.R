@@ -146,7 +146,7 @@ chargeGiftCard <- function(gift_card_id, amount) {
 }
 
 getAllGiftCards <- function() {
-  result <- squareGetRequest("https://connect.squareupsandbox.com/v2/gift-cards?type=DIGITAL&state=ACTIVE")$gift_cards
+  result <- squareGetRequest("https://connect.squareupsandbox.com/v2/gift-cards?type=DIGITAL")$gift_cards
   return(result)
 }
 
@@ -154,11 +154,4 @@ getAllGiftCards <- function() {
 # # Some payment ids... (apparently it doesn't matter how much the payment was, you can put whatever on a gift voucher...)
 # # rTRXt7tMvEbBCkwIidv2b9TMEUGZY = 20 dollar
 # # 5oSITxYQRHCLsCUc6XTj5BwRzcFZY = 10 dollar
-gift_card_id <- createGiftCard()
-putAmountOnGiftcard(gift_card_id, 5.5)
-# getGiftCard(gift_card_id)
-# chargeGiftCard(gift_card_id, 3)
-# gift_card <- getGiftCard(gift_card_id)
-# gift_cards <- getAllGiftCards()
-# 
-# all_gift_cards <- listAllGiftCards()
+
