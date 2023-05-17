@@ -7,13 +7,17 @@ library(RPostgres)
 library(uuid)
 library(openssl)
 library(qrcode)
+library(dotenv)
 
 source("functions.R")
+
+# Set up env
+setUp()
 
 # To retrigger the business list
 values <- reactiveValues(flag_delete = 0)
 
-ui <- fluidPage(theme = shinytheme("journal"),
+ui <- fluidPage(theme = shinytheme("flatly"),
                 # Make modal dialog a bit wider
                 tags$head(tags$style(".modal-dialog {width: 700px}")),
                 # Add header with logo & info link

@@ -34,10 +34,131 @@ addLoadbar <- function(loadingText = "Loading...",
                        tags$div(loadingText,id="loadmessage")))
 }
 
+setUp <- function() {
+  dotenv::load_dot_env("local/.env.sandbox")
+}
+
 connectToDB <- function() {
   db_user = "voucherlauncher"
   con <- RPostgres::dbConnect(RPostgres::Postgres(), dbname = "kindly-possum-2518.defaultdb", 
                               host = "free-tier5.gcp-europe-west1.cockroachlabs.cloud", 
                               port = 26257, user = db_user, 
-                              password = readLines("local/pw.txt"))
+                              password = Sys.getenv("POSTGRES_PW"))
 }
+
+generateSquareHeaders <- function() {
+  headers <- add_headers(.headers = c('Square-Version'='2023-04-19',
+                                      'Authorization'= paste("Bearer", Sys.getenv("SQUARE_ACCESS_TOKEN")), 
+                                      'Content-Type'='application/json'))
+  return(headers)
+}
+
+squarePostRequest <- function(url, body) {
+  # Get headers
+  header <- generateSquareHeaders()
+  
+  # Run request
+  result <- jsonlite::fromJSON(rawToChar(POST(url,
+                                              header,
+                                              body = body, 
+                                              encode = "raw" )$content))
+  return(result)
+}
+
+squareGetRequest <- function(url, id='') {
+  # Get headers
+  header <- generateSquareHeaders()
+  
+  # We need to add the extra slash on the id part, if its not there
+  if (id != '') {
+    if (!startsWith(id, '/')) {
+      id = paste0("/",id)
+    }
+  }
+  
+  # Run request
+  result <- jsonlite::fromJSON(rawToChar(GET(paste0(url,id),
+                                             header)$content))
+  return(result)
+}
+
+createGiftCard <- function() {
+  # Create gift card
+  body =  paste0('{
+      "idempotency_key": "',UUIDgenerate(),'",
+      "location_id": "LTZ7K962QS3DC",
+      "gift_card": {
+        "type": "DIGITAL"
+      }
+    }')
+  result <- squarePostRequest("https://connect.squareupsandbox.com/v2/gift-cards",
+                              body)
+  return(result$gift_card$id)
+}
+
+putAmountOnGiftcard <- function(gift_card_id, amount) {
+  body = paste0('{
+    "gift_card_activity": {
+      "type": "ACTIVATE",
+      "activate_activity_details": {
+        "amount_money": {
+          "amount": ',amount*100,',
+          "currency": "USD"
+        },
+        "buyer_payment_instrument_ids": [
+          "rTRXt7tMvEbBCkwIidv2b9TMEUGZY"
+        ]
+      },
+      "location_id": "LTZ7K962QS3DC",
+      "gift_card_id": "',gift_card_id,'"
+    },
+    "idempotency_key": "084e160a-0083-4446-ad5c-861489a8c511"
+  }')
+  result <- squarePostRequest("https://connect.squareupsandbox.com/v2/gift-cards/activities",
+                              body)
+  return(result)
+}
+
+getGiftCard <- function(id) {
+  result <- squareGetRequest("https://connect.squareupsandbox.com/v2/gift-cards", id)$gift_card
+  return(result)
+}
+
+chargeGiftCard <- function(gift_card_id, amount) {
+  body = paste0('{
+    "gift_card_activity": {
+      "type": "REDEEM",
+      "location_id": "LTZ7K962QS3DC",
+      "gift_card_id": "',gift_card_id,'",
+      "redeem_activity_details": {
+        "amount_money": {
+          "amount": ',amount*100,',
+          "currency": "USD"
+        }
+      }
+    },
+    "idempotency_key": "',UUIDgenerate(),'"
+  }')
+  result <- squarePostRequest("https://connect.squareupsandbox.com/v2/gift-cards/activities",
+                              body)
+  return(result)
+  
+}
+
+getAllGiftCards <- function() {
+  result <- squareGetRequest("https://connect.squareupsandbox.com/v2/gift-cards?type=DIGITAL&state=ACTIVE")$gift_cards
+  return(result)
+}
+
+
+# # Some payment ids... (apparently it doesn't matter how much the payment was, you can put whatever on a gift voucher...)
+# # rTRXt7tMvEbBCkwIidv2b9TMEUGZY = 20 dollar
+# # 5oSITxYQRHCLsCUc6XTj5BwRzcFZY = 10 dollar
+gift_card_id <- createGiftCard()
+putAmountOnGiftcard(gift_card_id, 5.5)
+# getGiftCard(gift_card_id)
+# chargeGiftCard(gift_card_id, 3)
+# gift_card <- getGiftCard(gift_card_id)
+# gift_cards <- getAllGiftCards()
+# 
+# all_gift_cards <- listAllGiftCards()

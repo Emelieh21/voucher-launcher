@@ -2,14 +2,19 @@ library(shiny)
 library(shinyWidgets)
 library(shinythemes)
 library(RPostgres)
+library(uuid)
 library(httr)
 library(shinyjs)
 library(jsonlite)
 library(twilio)
+library(dotenv)
 
 source("functions.R")
 
-cred <- fromJSON("local/cred.json")
+# Set up env
+setUp()
+
+# Parameters
 original_url <- NULL
 
 ui <- fluidPage(theme = shinytheme("journal"),
@@ -84,21 +89,6 @@ server <- function(input, output, session) {
               div(style = "margin-top: 20px"),
               tags$span(business$business_address[1]))
         })
-        # output$business <- renderUI({
-        #   # Header
-        #   div(
-        #     h1(style="text-align:center;margin-left:40px;", paste0("Get your gift voucher for ",business$business_name[1])),
-        #     tags$br(),
-        #     # Show photo ####
-        #     div(class="inline-box", 
-        #       img(src = business$image[1], width = 300),
-        #       div(style = "margin-top: 20px"),
-        #       tags$em(business$business_description[1]),
-        #       div(style = "margin-top: 20px"),
-        #       tags$span(business$business_address[1])
-        #     )
-        #   )
-        # })
       }
     } 
   })
