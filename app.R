@@ -8,6 +8,13 @@ library(uuid)
 library(openssl)
 library(qrcode)
 library(dotenv)
+library(httr)
+library(jsonlite)
+
+# Parameters
+corporate_color_primary <- "#4f3c66"
+corporate_color_secondary <- "#c379b8"
+original_url <- NULL
 
 source("functions.R")
 
@@ -18,23 +25,45 @@ setUp()
 values <- reactiveValues(flag_delete = 0)
 
 ui <- fluidPage(theme = shinytheme("flatly"),
-                # Make modal dialog a bit wider
-                tags$head(tags$style(".modal-dialog {width: 700px}")),
-                # Add header with logo & info link
-                addHeader(),
-                # Add loadbar
-                addLoadbar(),
-                # Set full screen background image
-                setBackgroundImage(src = 'gift-ga793e7a9f_1920.jpg'),
                 # Use shinyjs
                 useShinyjs(),
+                # Make modal dialog a bit wider
+                tags$head(tags$style(".modal-dialog {width: fit-content !important;}")),
+                # Make urls corporate color
+                tags$head(tags$style(paste0(".a-corporate {color: ",corporate_color_secondary," !important;}"))),
+                # Add header with logo & info link
+                addHeader(color = corporate_color_primary),
+                # Add loadbar
+                addLoadbar(color = corporate_color_secondary),
+                # Set full screen background image
+                setBackgroundImage(src = 'gift-ga793e7a9f_1920.jpg'),
                 # Button to add your business ####
-                actionButton("add_business", "Add your business", icon("plus"), 
-                             style="font-family:sans-serif;color:#fff;background-color:#4f3c66;border-color:#4f3c66;font-size:200%;margin:35px;"),
+                actionButton("add_business", "Register your business",
+                             style=paste0("float:right;font-family:sans-serif;color:#fff;background-color:",corporate_color_secondary,
+                                          ";border-color:",corporate_color_secondary,";font-size:150%;margin:35px;")),
                 uiOutput("businesses") # dark blue #224578 dark purple #4f3c66 bright green #8CF4A4
                 )
                 
 server <- function(input, output, session) {
+  server_values <- reactiveValues(current_gift_card = NULL,
+                                  current_business_id = NULL,
+                                  current_businesses = NULL)
+  
+  # ===================== #
+  # Store original url ####
+  # ===================== #
+  observe({
+    # We only want to do this in the beginning
+    if (is.null(original_url)) {
+      original_url <<- paste0(session$clientData$url_protocol,"//",
+                              session$clientData$url_hostname,
+                              ifelse(session$clientData$url_port != "",
+                                     paste0(":",session$clientData$url_port), ""),
+                              session$clientData$url_pathname)
+    }
+    print(original_url)
+  })
+  
   # =========================== #
   # Pop up window to add business ####
   # =========================== #
@@ -140,18 +169,38 @@ server <- function(input, output, session) {
   output$businesses <- renderUI({
     print(input$ok) # Reload when new business is saved
     print(values$flag_delete)
-    con <- connectToDB()
     user <- session$userData$auth0_info$sub
     print(user)
     if (is.null(user)) {
       print("Not logged in")
       user <- "test"
     }
-    businesses <- dbGetQuery(con, paste0("
-                                   select business_id, business_name, business_description as business_info
-                                   from businesses 
+    con <- connectToDB()
+    businesses <- dbGetQuery(con, paste0("with voucher_total as (
+                                            select sum(amount) as voucher_total,
+                                                   count(distinct(gift_card_id)) as voucher_count,
+                                                   business_id
+                                            from gift_cards
+                                            group by business_id
+                                        ),
+                                        visits as (
+                                            select count(distinct(session_token)) as count,
+                                                   business_id
+                                            from business_tracking
+                                            group by business_id
+                                        )
+                                   select b.business_id, 
+                                          b.business_name, 
+                                          b.business_description as business_info,
+                                          coalesce(v.voucher_count,0) as voucher_count,
+                                          coalesce(v.voucher_total,0) as voucher_total,
+                                          coalesce(visits.count,0) as visit_count
+                                   from businesses b
+                                   left join voucher_total v ON b.business_id = v.business_id
+                                   left join visits ON b.business_id = visits.business_id
                                    where user_name = '",user,"'"))
     dbDisconnect(con)
+    server_values$current_businesses <- businesses
     if (nrow(businesses) == 0) {
       return(NULL)
     }
@@ -159,15 +208,22 @@ server <- function(input, output, session) {
     for (i in c(1:nrow(businesses))) {
       business_id = businesses$business_id[i]
       png(paste0("www/",business_id,".png"))
+      url = paste0("https://emelieh21.shinyapps.io/voucher-launcher-open/?business_id=",businesses$business_id[i])
       # Generate QR codes ####
-      plot(qr_code(paste0("https://emelieh21.shinyapps.io/voucher-launcher-open/?business_id=",businesses$business_id[i],"&mode=scanned"), ecl = "Q"))
+      plot(qr_code(url, ecl = "Q"))
       dev.off()
+      print(businesses[i,])
       business_div <- div(style='margin-left:5px;',
         div(style="display: inline-block;vertical-align:top;margin-top:20px; margin-left:20px;", 
-            img(src = paste0(business_id,".png"), width = 150)),
+            img(src = paste0(business_id,".png"), width = 150),
+            HTML("<a class='a-corporate' style='display:block;text-align:center;margin-top:5px;' href='",url,"'>View voucher page</a></br>")),
         div(style="display: inline-block;vertical-align:top;margin-top:20px; margin-left:20px; width:400px;", 
             HTML(paste0("<b>Name: </b>", businesses$business_name[i], "</br>",
-                        "<b>Info: </b>", businesses$business_info[i]), "</br>"
+                        "<b>Info: </b>", businesses$business_info[i]), "</br>",
+                        # TODO: would be more proper if we would store the voucher currency also...
+                        "<b>Total voucher amount: </b>$",businesses$voucher_total[i],"</br>",
+                        "<b>Number of vouchers sold: </b>",as.integer(businesses$voucher_count[i]),"</br>",
+                        "<b>Total page visits: </b>",as.integer(businesses$visit_count[i]),"</br>"
                  ),
             actionButton(paste0("delete_",business_id), "Delete", #icon("trash-alt"),
                          style="font-size:65%;padding-top:5px;padding-bottom:5px;padding-left:10px;padding-right:10px;margin-top:10px;"))
@@ -187,18 +243,114 @@ server <- function(input, output, session) {
         }, once = TRUE, autoDestroy = TRUE, ignoreInit = TRUE)
       }
     )
-    return(div(style="margin-left:35px;",HTML(businesses_html)))
+    return(div(style="margin-left:35px;margin-top:2em;",HTML(businesses_html)))
   })
   
-  # Start reacting to URL parameters
+  # React to gift voucher scan ####
   observe({
     query <- parseQueryString(session$clientData$url_search)
     if (!is.null(query)) {
-      showNotification(paste(names(query),collapse=", "))
+      if ("gift_card_id" %in% names(query)) {
+        gift_card_id <- query[["gift_card_id"]]
+      } else {
+        return(NULL)
+      }
+      if ("business_id" %in% names(query)) {
+        business_id <- query[["business_id"]]
+      }
+      # Check if the scanned voucher is linked to the current account
+      # In a real app this would not be necessary as each business would have their own square account key.      gift_card <- getGiftCard(gift_card_id)
+      businesses <- server_values$current_businesses
+      con <- connectToDB()
+      gift_cards <- dbGetQuery(con, paste0("select gift_card_id 
+                                            from gift_cards 
+                                            where business_id IN ('",
+                                            paste(businesses$business_id, collapse="','"),"')"))
+      if (!gift_card_id %in% gift_cards$gift_card_id) {
+        # If this voucher is not related to the current account, we inform the user
+        showModal(modalDialog(
+          title = "Voucher not found",
+          tags$em("We couldn't find this voucher in the current account.")
+        ))
+        return(NULL)
+      }
+      
+      gift_card <- getGiftCard(gift_card_id)
+      gift_card_details <- gift_card[names(gift_card)[!names(gift_card) %in% c('id','balance_money')]]
+      
+      # We need to be able to access the details from the redeem section
+      server_values$current_gift_card <- gift_card
+      server_values$current_business_id <- business_id
+      
+      # Build gift card popup
+      gift_card_popup <- HTML(paste0('<div style="padding:12px;">',
+                  '<h3 id="giftcard-header">Remaining balance: ',gift_card$balance_money$amount/100,' ',gift_card$balance_money$currency,'</h3></br>',
+                  '<div style="font-weight:600;display:inline-block;vertical-align:top;">',
+                  # List names of all details
+                  paste(names(gift_card_details), collapse=':</br>'),'</div>',
+                  '<div style="margin-left:12px;display:inline-block;vertical-align:top;">',
+                  # List values of all details
+                  paste(gift_card_details, collapse='</br>'),'</div></br>',
+                  '<div style=margin-top:36px;>',
+                  numericInput("amount_to_redeem", "Amount to redeem", value=0,
+                               min = 0, max = gift_card$balance_money$amount/100,
+                               step = 0.01),
+                  '<button id="redeem_voucher" type="button" style="background-color:',corporate_color_secondary,
+                  ';" class="btn btn-default action-button shiny-bound-input" >
+                      Redeem voucher
+                    </button>',
+                  '</div>',
+                  uiOutput('info_from_redeem_section'),
+                  '</div>'))
+      
+      showModal(modalDialog(
+        title="Gift card found",
+        gift_card_popup
+      ))
     } 
   })
   
+  # React to redeem button
+  observeEvent(input$redeem_voucher, {
+    amount <- input$amount_to_redeem
+    print(amount)
+    print(class(amount))
+    
+    # Load gift card & business id
+    gift_card <- server_values$current_gift_card
+    business_id <- server_values$current_business_id
+    
+    # Check if redeem amount exceeds voucher amount
+    if (amount > gift_card$balance_money$amount/100) {
+      #showNotification("Failed to redeem voucher, the amount is exceeding the gift card balance.")
+      output$info_from_redeem_section <- renderUI(tags$em(style='color: red;',
+                                                          'Failed to redeem voucher, the amount is exceeding the gift card balance.'))
+      updateNumericInput(session, "amount_to_redeem", value=gift_card$balance_money$amount/100)
+      return(NULL)
+    }
+    # Otherwise we charge the voucher
+    chargeGiftCard(gift_card$id, amount)
+    
+    # Update the amount in the popup
+    new_amount = gift_card$balance_money$amount/100-amount
+    html("giftcard-header", paste0("Remaining balance: ",new_amount," ",gift_card$balance_money$currency))
+    
+    # Inform user
+    output$info_from_redeem_section <- renderUI(
+      tags$em(style='color: green;',
+              'Voucher has been successfully charged.'))
+  })
 }
-
-shinyApp(ui, server)
-#shinyAppAuth0(ui, server, config_file = 'local/_auth0.yml')
+ 
+# Currently launching the app like this because I need my custom auth0_ui function...
+config_file = 'local/_auth0.yml'
+disable <- getOption("auth0_disable")
+if (!is.null(disable) && disable) {
+  shiny::shinyApp(ui, server)
+} else {
+  if (is.null(config_file)) {
+    config_file <- auth0_find_config_file()
+  }
+  info <- auth0_info(config_file)
+  shiny::shinyApp(auth0_ui(ui, info), auth0_server(server, info))
+}

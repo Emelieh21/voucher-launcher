@@ -10,41 +10,42 @@ library(twilio)
 library(dotenv)
 library(qrcode)
 
+# Parameters
+corporate_color_primary <- "#4f3c66"
+corporate_color_secondary <- "#c379b8"
+original_url <- NULL
+
+# I don't want to create more and more vouchers while I am still testing
+generate_vouchers = TRUE
+
 source("functions.R")
 
 # Set up env
 setUp()
 
-# Parameters
-original_url <- NULL
-business_id <- NULL
-# I don't want to create more and more vouchers while I am still testing
-generate_vouchers = FALSE
-
 ui <- fluidPage(theme = shinytheme("journal"),
                 # Load all dependencies
-                tags$head(tags$link(rel = "stylesheet", type = "text/css", href = "app-style.css")),
+                tags$head(tags$link(rel = "stylesheet", type = "text/css", href = "app.css")),
+                tags$head(tags$style(".modal-dialog {width: fit-content !important; max-width: 95% !important; text-align: center !important;}")),
                 tags$head(tags$script(src='https://sandbox.web.squarecdn.com/v1/square.js')),
                 tags$head(tags$script(src="app.js")),
-                # Make modal dialog a bit wider
-                tags$head(tags$style(".modal-dialog {width: 700px}")),
                 # Add header with logo & info link
-                addHeader(),
+                addHeader(color = corporate_color_primary),
                 # Add loadbar
-                addLoadbar(),
+                addLoadbar(color = corporate_color_secondary),
                 # Show business, payment form needs to be there already, so loading it from UI side
                 div(style="text-align:center", 
                     uiOutput("business_header"),
                     tags$br(),
                     # Show photo ####
-                    div(class="inline-box",
+                    div(style="margin-right:40px;", class="inline-box",
                         uiOutput("business_details")
                     ),
                     # Show payment box ####
                     div(class="inline-box",
                         HTML("<em><b>Note</b>: this is a dummy app. No real payment will be made.</em>"),
+                        textInput("recipient_email", label = "", placeholder = "Email address of voucher recipient", width = "100%"),
                         HTML("<form id='payment-form'>
-                          <input id='recipient-email' placeholder='Email address of voucher recipient' />
                           <span class='input-euro left'>
                             <input type='number' id='voucher-amount' value='20.00'/>
                           </span>
@@ -57,6 +58,7 @@ ui <- fluidPage(theme = shinytheme("journal"),
                 )
                 
 server <- function(input, output, session) {
+  server_values <- reactiveValues(current_business = NULL)
   # ===================== #
   # Store original url ####
   # ===================== #
@@ -79,12 +81,20 @@ server <- function(input, output, session) {
     query <- parseQueryString(session$clientData$url_search)
     if (!is.null(query)) {
       if ("business_id" %in% names(query)) {
-        business_id <<- query[["business_id"]]
+        business_id <- query[["business_id"]]
         print(business_id)
+        
+        # Keep track of unique visits
+        trackSession(session, business_id)
+        
+        # Get business info
         con <- connectToDB()
         business <- dbGetQuery(con, paste0("select business_id, business_name, business_description, business_address, business_email, image from businesses where business_id = '",business_id,"'"))
+        dbDisconnect(con)
+        server_values$current_business <- business 
+        
         output$business_header <- renderUI({
-          h1(style="text-align:center;margin-left:40px;", paste0("Get your gift voucher for ",business$business_name[1]))
+          h1(style="text-align:center;", paste0("Get your gift voucher for ",business$business_name[1]))
         })
         output$business_details <- renderUI({
           div(img(src = business$image[1], width = 300),
@@ -100,7 +110,11 @@ server <- function(input, output, session) {
   observeEvent(input$success, {
     print("Payment successful")
     print(input$success$value)
+    
+    # Get value
     amount <- as.numeric(input$success$value)
+    # Get business_id
+    business_id <- server_values$current_business$business_id
     
     # Generate and activate gift card
     if (generate_vouchers) {
@@ -111,6 +125,16 @@ server <- function(input, output, session) {
     } else {
       gift_card_id <- "gftc:3300392d0c0b4561b6dfe68f35851a72"
     }
+    
+    # Store business_id and gift_card_id in a table, so we know they are linked.
+    # In a real app this would not be necessary as each business would have their own square account key.
+    con <- connectToDB()
+    dat <- as.data.frame(gift_card_id, stringsAsFactors = FALSE) 
+    names(dat) <- "gift_card_id"
+    dat$business_id <- business_id
+    dat$amount <- amount
+    dbWriteTable(con, "gift_cards", dat, overwrite = FALSE, append = TRUE)
+    dbDisconnect(con)
 
     # Generate QR code
     gift_card_file_id <- gsub(":","_",gift_card_id)
@@ -119,9 +143,17 @@ server <- function(input, output, session) {
     plot(qr_code(paste0("https://emelieh21.shinyapps.io/voucher-launcher/?gift_card_id=",gift_card_id,
                         "&business_id=",business_id), ecl = "Q"))
     dev.off()
+    
+    print(input$recipient_email)
+    # TODO: Add a step where we send this voucher to the user
+    
     # Show user QR code
-    showModal(modalDialog(title = "Your voucher is ready",
-                          img(src = paste0(gift_card_file_id,".png"), class = "img-center", width = 450)
+    showModal(modalDialog(title = "Thank you for your order",
+                          HTML(paste0("<h3>Enjoy your gift voucher for ", server_values$current_business$business_name,"!</h3></br>",
+                                      "<em>Your voucher has a value of <b>$",amount, "</b> and is valid until <b>",
+                                      Sys.Date()+366,"</b>.</em></br>",
+                                      "<div style='margin-top:16px;'>Your voucher and a confirmation of your order </br>have been sent to <b>", input$recipient_email,"</b></div>")),
+                          img(src = paste0(gift_card_file_id,".png"), class = "img-center", width = 360)
                           )
               )
   })
